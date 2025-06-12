@@ -84,9 +84,25 @@ func getChain(w http.ResponseWriter, _ *http.Request) {
     json.NewEncoder(w).Encode(Blockchain)
 }
 
+func dataExists(data string) bool {
+    for _, block := range Blockchain {
+        if block.Data == data {
+            return true
+        }
+    }
+    return false
+}
+
+
 func addData(w http.ResponseWriter, r *http.Request) {
     body, _ := io.ReadAll(r.Body)
     data := string(body)
+
+    if dataExists(data) {
+        http.Error(w, "Dado já existente na blockchain", http.StatusConflict)
+        return
+    }
+
     newBlock := generateBlock(Blockchain[len(Blockchain)-1], data)
     if isBlockValid(newBlock, Blockchain[len(Blockchain)-1]) {
         Blockchain = append(Blockchain, newBlock)
@@ -94,6 +110,7 @@ func addData(w http.ResponseWriter, r *http.Request) {
     }
     json.NewEncoder(w).Encode(newBlock)
 }
+
 
 func receiveBlock(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(r.Body)
@@ -106,6 +123,11 @@ func receiveBlock(w http.ResponseWriter, r *http.Request) {
 	err = json.Unmarshal(body, &block)
 	if err != nil {
 		http.Error(w, "JSON inválido", http.StatusBadRequest)
+		return
+	}
+
+	if dataExists(block.Data) {
+		http.Error(w, "Dado duplicado detectado, bloco rejeitado", http.StatusConflict)
 		return
 	}
 
@@ -123,6 +145,7 @@ func receiveBlock(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("Bloco inválido"))
 	}
 }
+
 
 
 func registerNode(w http.ResponseWriter, r *http.Request) {
@@ -234,6 +257,21 @@ func contains(slice []string, item string) bool {
     return false
 }
 
+func enableCORS(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        // Permite requisições de qualquer origem, para produção ajuste para seu domínio
+        w.Header().Set("Access-Control-Allow-Origin", "*")
+        w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+        
+        // Para requisições OPTIONS (preflight), responde imediatamente
+        if r.Method == "OPTIONS" {
+            w.WriteHeader(http.StatusOK)
+            return
+        }
+        next.ServeHTTP(w, r)
+    })
+}
 
 
 func main() {
@@ -244,10 +282,10 @@ func main() {
 
     Blockchain = append(Blockchain, createGenesisBlock())
 
-    http.HandleFunc("/chain", getChain)
-    http.HandleFunc("/add-data", addData)
-    http.HandleFunc("/receive-block", receiveBlock)
-    http.HandleFunc("/register-node", registerNode)
+    http.Handle("/chain", enableCORS(http.HandlerFunc(getChain)))
+    http.Handle("/add-data", enableCORS(http.HandlerFunc(addData)))
+    http.Handle("/receive-block", enableCORS(http.HandlerFunc(receiveBlock)))
+    http.Handle("/register-node", enableCORS(http.HandlerFunc(registerNode)))
 
     if len(os.Args) > 2 {
         registerWithPeer(os.Args[2]) // se passado, tenta registrar com outro nó
